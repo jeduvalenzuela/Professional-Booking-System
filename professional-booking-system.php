@@ -18,7 +18,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Definir constantes del plugin
-define('PBS_VERSION', '1.0.0');
+define('PBS_VERSION', '1.0.9');
 define('PBS_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('PBS_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('PBS_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -57,13 +57,13 @@ class Professional_Booking_System {
     private function load_dependencies() {
         // Cargar clases principales
         require_once PBS_PLUGIN_DIR . 'includes/class-pbs-database.php';
+        require_once PBS_PLUGIN_DIR . 'includes/class-pbs-security.php';
+        require_once PBS_PLUGIN_DIR . 'includes/class-pbs-tests.php';
         require_once PBS_PLUGIN_DIR . 'includes/class-pbs-admin.php';
         require_once PBS_PLUGIN_DIR . 'includes/class-pbs-bookings.php';
         require_once PBS_PLUGIN_DIR . 'includes/class-pbs-services.php';
         require_once PBS_PLUGIN_DIR . 'includes/class-pbs-schedules.php';
-        require_once PBS_PLUGIN_DIR . 'includes/class-pbs-payments.php';
         require_once PBS_PLUGIN_DIR . 'includes/class-pbs-notifications.php';
-        require_once PBS_PLUGIN_DIR . 'includes/class-pbs-google-calendar.php';
         
         // Cargar widgets de Elementor
         require_once PBS_PLUGIN_DIR . 'includes/elementor/class-pbs-elementor.php';
@@ -71,16 +71,14 @@ class Professional_Booking_System {
         // Cargar API REST
         require_once PBS_PLUGIN_DIR . 'includes/api/class-pbs-rest-api.php';
 
-        // después de cargar PBS_Payment_Gateway
+        // Cargar pasarelas de pago
         require_once PBS_PLUGIN_DIR . 'includes/payments/class-pbs-payment-gateway.php';
         require_once PBS_PLUGIN_DIR . 'includes/payments/class-pbs-payment-mercadopago.php';
         require_once PBS_PLUGIN_DIR . 'includes/payments/class-pbs-payment-stripe.php';
         require_once PBS_PLUGIN_DIR . 'includes/payments/class-pbs-payment-paypal.php';
 
-        //integraciones
+        // Cargar integraciones
         require_once PBS_PLUGIN_DIR . 'includes/integrations/class-pbs-google-calendar.php';
-
-
     }
     
     /**

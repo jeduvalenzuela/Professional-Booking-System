@@ -281,7 +281,7 @@ jQuery(document).ready(function($) {
 
 
     
-    const nonce = pbsAdmin.nonce; // asumiendo que ya localizaste este objeto
+    const nonce = pbsAdminData.nonce; // asumiendo que ya localizaste este objeto
 
     // Ver detalle
     $(document).on('click', '.pbs-view-booking', function(e) {
@@ -345,6 +345,49 @@ jQuery(document).ready(function($) {
             } else {
                 alert(response.data && response.data.message ? response.data.message : 'Error updating booking');
             }
+        });
+    });
+
+    // Generar Google Meet link
+    $(document).on('click', '.pbs-generate-meet', function(e) {
+        e.preventDefault();
+        const $btn = $(this);
+        const bookingId = $btn.data('booking-id');
+        const originalText = $btn.text();
+        
+        console.log('Generate Meet clicked for booking ID:', bookingId);
+        console.log('Nonce:', nonce);
+        console.log('AJAX URL:', ajaxurl);
+        
+        $btn.prop('disabled', true).text('Generando...');
+
+        $.post(ajaxurl, {
+            action: 'pbs_generate_meet',
+            nonce: nonce,
+            booking_id: bookingId
+        }, function(response) {
+            console.log('Response:', response);
+            if (response.success) {
+                alert('✅ Google Meet link generado correctamente!\n\nLink: ' + response.data.meet_link);
+                location.reload();
+            } else {
+                const errorMsg = response.data && response.data.message ? response.data.message : 'Error generating Google Meet link';
+                
+                // Mostrar mensaje específico si Google Calendar no está habilitado
+                if (errorMsg.includes('no está habilitado')) {
+                    alert('⚠️ Google Calendar no está habilitado\n\nPor favor, ve a:\nReservas → Configuración → Google Calendar\n\ny configura tus credenciales de Google.');
+                } else {
+                    alert('❌ Error: ' + errorMsg);
+                }
+                
+                $btn.prop('disabled', false).text(originalText);
+            }
+        }).fail(function(xhr, status, error) {
+            console.error('AJAX Error:', error);
+            console.error('Status:', status);
+            console.error('Response:', xhr.responseText);
+            alert('Error: ' + xhr.status + ' ' + xhr.statusText);
+            $btn.prop('disabled', false).text(originalText);
         });
     });
 });

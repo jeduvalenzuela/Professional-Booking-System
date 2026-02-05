@@ -1,0 +1,156 @@
+# Translation template for Professional Booking System
+# Copyright (C) 2026 Eduardo Valenzuela
+# This file is distributed under the same license as the Professional Booking System package.
+# Translators:
+msgid ""
+msgstr ""
+"Project-Id-Version: Professional Booking System 1.0.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-01-30 00:00:00+0000\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language-Team: \n"
+"X-Generator: Poedit 3.0\n"
+
+#: professional-booking-system.php
+msgctxt "Plugin Name"
+msgid "Professional Booking System"
+msgstr ""
+
+#: professional-booking-system.php
+msgctxt "Plugin Description"
+msgid "Sistema profesional de gestión de reservas con pagos online, integración con Google Calendar y widgets para Elementor"
+msgstr ""
+
+#: includes/class-pbs-admin.php
+msgid "Professional Booking"
+msgstr ""
+
+#: includes/class-pbs-admin.php
+msgid "Reservas"
+msgstr ""
+
+#: includes/class-pbs-admin.php
+msgid "Dashboard"
+msgstr ""
+
+#: includes/class-pbs-admin.php
+msgid "Todas las Reservas"
+msgstr ""
+
+#: includes/class-pbs-admin.php
+msgid "Servicios"
+msgstr ""
+
+#: includes/class-pbs-admin.php
+msgid "Horarios"
+msgstr ""
+
+#: includes/class-pbs-admin.php
+msgid "Excepciones"
+msgstr ""
+
+#: includes/class-pbs-admin.php
+msgid "Configuración"
+msgstr ""
+
+#: includes/class-pbs-bookings.php
+msgid "No se pudo crear el bloqueo de horario."
+msgstr ""
+
+#: includes/class-pbs-bookings.php
+msgid "Reserva creada exitosamente"
+msgstr ""
+
+#: includes/class-pbs-bookings.php
+msgid "No se pudo crear la reserva"
+msgstr ""
+
+#: includes/class-pbs-database.php
+msgid "Consulta General"
+msgstr ""
+
+#: includes/class-pbs-database.php
+msgid "Consulta general de 60 minutos"
+msgstr ""
+
+#: includes/class-pbs-services.php
+msgid "No se pudo crear el servicio."
+msgstr ""
+
+#: includes/class-pbs-services.php
+msgid "ID de servicio inválido."
+msgstr ""
+
+#: includes/class-pbs-services.php
+msgid "No se pudo actualizar el servicio."
+msgstr ""
+
+#: includes/class-pbs-schedules.php
+msgid "No se pudo crear el horario."
+msgstr ""
+
+#: includes/class-pbs-schedules.php
+msgid "ID de horario inválido."
+msgstr ""
+
+#: includes/class-pbs-schedules.php
+msgid "No se pudo actualizar el horario."
+msgstr ""
+
+#: includes/class-pbs-schedules.php
+msgid "No se pudo eliminar el horario."
+msgstr ""
+
+#: includes/class-pbs-notifications.php
+msgid "Your appointment is confirmed"
+msgstr ""
+
+#: includes/class-pbs-notifications.php
+msgid "New confirmed booking"
+msgstr ""
+
+#: includes/elementor/widgets/class-pbs-booking-widget.php
+msgid "Content"
+msgstr ""
+
+#: includes/elementor/widgets/class-pbs-booking-widget.php
+msgid "Service"
+msgstr ""
+
+#: includes/elementor/widgets/class-pbs-booking-widget.php
+msgid "Select the service for this booking widget"
+msgstr ""
+
+#: includes/elementor/widgets/class-pbs-booking-widget.php
+msgid "Show Service Info"
+msgstr ""
+
+#: includes/elementor/widgets/class-pbs-booking-widget.php
+msgid "Yes"
+msgstr ""
+
+#: includes/elementor/widgets/class-pbs-booking-widget.php
+msgid "No"
+msgstr ""
+
+#: includes/elementor/widgets/class-pbs-booking-widget.php
+msgid "Container"
+msgstr ""
+
+#: includes/elementor/widgets/class-pbs-booking-widget.php
+msgid "Style"
+msgstr ""
+
+#: includes/payments/class-pbs-payment-stripe.php
+msgid "Stripe"
+msgstr ""
+
+#: includes/payments/class-pbs-payment-paypal.php
+msgid "PayPal"
+msgstr ""
+
+#: includes/payments/class-pbs-payment-mercadopago.php
+msgid "MercadoPago"
+msgstr ""

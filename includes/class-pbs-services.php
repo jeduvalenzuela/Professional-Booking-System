@@ -14,7 +14,7 @@ class PBS_Services {
     /**
      * Tabla de servicios
      */
-    public static function get_table_name() {
+    public static function get_table_name(): string {
         global $wpdb;
         return $wpdb->prefix . 'pbs_services';
     }
@@ -22,7 +22,7 @@ class PBS_Services {
     /**
      * Crear servicio
      */
-    public static function create($data) {
+    public static function create( array $data ): int|WP_Error {
         global $wpdb;
 
         $defaults = array(
@@ -61,7 +61,7 @@ class PBS_Services {
     /**
      * Actualizar servicio
      */
-    public static function update($id, $data) {
+    public static function update( int $id, array $data ): bool|WP_Error {
         global $wpdb;
 
         $id = (int) $id;
@@ -123,14 +123,14 @@ class PBS_Services {
     /**
      * Eliminar (borrado lógico) servicio
      */
-    public static function delete($id) {
+    public static function delete( int $id ): bool|WP_Error {
         return self::update($id, array('status' => 'inactive'));
     }
 
     /**
      * Obtener un servicio
      */
-    public static function get($id) {
+    public static function get( int $id ): ?array {
         global $wpdb;
 
         $id = (int) $id;
@@ -143,13 +143,20 @@ class PBS_Services {
             $id
         );
 
-        return $wpdb->get_row($sql);
+        return $wpdb->get_row($sql, ARRAY_A);
+    }
+
+    /**
+     * Obtener un servicio (alias para compatibilidad)
+     */
+    public static function get_service( int $id ): ?array {
+        return self::get($id);
     }
 
     /**
      * Listar servicios
      */
-    public static function get_all($args = array()) {
+    public static function get_all( array $args = array() ): array {
         global $wpdb;
 
         $defaults = array(
@@ -186,14 +193,14 @@ class PBS_Services {
             $limit_sql
         ";
 
-        return $wpdb->get_results($sql);
+        return $wpdb->get_results($sql, ARRAY_A) ?? array();
     }
 
     /**
      * Verificar si un servicio está activo
      */
-    public static function is_active($id) {
+    public static function is_active( int $id ): bool {
         $service = self::get($id);
-        return $service && $service->status === 'active';
+        return $service && isset( $service['status'] ) && $service['status'] === 'active';
     }
 }

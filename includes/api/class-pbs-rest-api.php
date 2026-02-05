@@ -38,6 +38,19 @@ class PBS_REST_API {
     public function register_routes() {
         $namespace = 'professional-booking-system/v1';
 
+        // CSRF Token (público)
+        register_rest_route(
+            $namespace,
+            '/csrf-token',
+            array(
+                array(
+                    'methods'             => WP_REST_Server::READABLE,
+                    'callback'            => array( $this, 'get_csrf_token' ),
+                    'permission_callback' => '__return_true',
+                ),
+            )
+        );
+
         // Servicios (público)
         register_rest_route(
             $namespace,
@@ -207,6 +220,21 @@ class PBS_REST_API {
     }
 
     /**
+     * GET /csrf-token
+     * Devuelve un token CSRF para usar en peticiones POST
+     */
+    public function get_csrf_token( WP_REST_Request $request ) {
+        $token = wp_create_nonce( 'pbs_booking_csrf' );
+
+        return new WP_REST_Response(
+            array(
+                'csrf_token' => $token,
+            ),
+            200
+        );
+    }
+
+    /**
      * GET /services
      */
     public function get_services( WP_REST_Request $request ) {
@@ -215,13 +243,13 @@ class PBS_REST_API {
         $data = array();
         foreach ( $services as $service ) {
             $data[] = array(
-                'id'          => (int) $service->id,
-                'name'        => $service->name,
-                'description' => $service->description,
-                'duration'    => (int) $service->duration,
-                'price'       => (float) $service->price,
-                'currency'    => isset( $service->currency ) ? $service->currency : get_option( 'pbs_payment_currency', 'USD' ),
-                'max_per_slot'=> isset( $service->max_per_slot ) ? (int) $service->max_per_slot : 1,
+                'id'          => (int) $service['id'],
+                'name'        => $service['name'],
+                'description' => $service['description'],
+                'duration'    => (int) $service['duration'],
+                'price'       => (float) $service['price'],
+                'currency'    => isset( $service['currency'] ) ? $service['currency'] : get_option( 'pbs_payment_currency', 'USD' ),
+                'max_per_slot'=> isset( $service['max_per_slot'] ) ? (int) $service['max_per_slot'] : 1,
             );
         }
 
@@ -250,13 +278,13 @@ class PBS_REST_API {
         }
 
         $data = array(
-            'id'          => (int) $service->id,
-            'name'        => $service->name,
-            'description' => $service->description,
-            'duration'    => (int) $service->duration,
-            'price'       => (float) $service->price,
-            'currency'    => isset( $service->currency ) ? $service->currency : get_option( 'pbs_payment_currency', 'USD' ),
-            'max_per_slot'=> isset( $service->max_per_slot ) ? (int) $service->max_per_slot : 1,
+            'id'          => (int) $service['id'],
+            'name'        => $service['name'],
+            'description' => $service['description'],
+            'duration'    => (int) $service['duration'],
+            'price'       => (float) $service['price'],
+            'currency'    => isset( $service['currency'] ) ? $service['currency'] : get_option( 'pbs_payment_currency', 'USD' ),
+            'max_per_slot'=> isset( $service['max_per_slot'] ) ? (int) $service['max_per_slot'] : 1,
         );
 
         return new WP_REST_Response( $data, 200 );
@@ -294,11 +322,24 @@ class PBS_REST_API {
         }
 
         // Obtener horarios para ese día
-        $weekday = strtolower( date( 'l', strtotime( $date ) ) ); // monday, tuesday, ...
-        $schedules = PBS_Schedules::get_schedules_by_day( $weekday );
+        // day_of_week: 0=Domingo, 1=Lunes, ..., 6=Sábado
+        // date('w') retorna el día de la semana: 0=Sunday, 1=Monday, ..., 6=Saturday
+        $day_of_week = (int) date( 'w', strtotime( $date ) );
+        $schedules = PBS_Schedules::get_schedules_by_day( $day_of_week );
+
+        // Si no hay horarios para ese día
+        if ( empty( $schedules ) ) {
+            return new WP_REST_Response(
+                array(
+                    'date'  => $date,
+                    'slots' => array(),
+                ),
+                200
+            );
+        }
 
         // Aplicar excepciones (día bloqueado completo)
-        $is_blocked = PBS_Schedules::get_instance()->is_day_blocked( $date );
+        $is_blocked = PBS_Schedules::is_day_blocked( $date );
         if ( $is_blocked ) {
             return new WP_REST_Response(
                 array(
@@ -325,7 +366,7 @@ class PBS_REST_API {
                 $slot_end   = date( 'H:i', $current + ( $duration * 60 ) );
 
                 // Comprobar si el slot está libre
-                $is_taken = PBS_Bookings::get_instance()->is_slot_taken(
+                $is_taken = PBS_Bookings::is_slot_taken(
                     $service_id,
                     $date,
                     $slot_start,
@@ -369,7 +410,7 @@ class PBS_REST_API {
 
                 foreach ( $slots as $index => $slot_item ) {
                     // Duración del servicio (para saber cuánto ocupa el slot)
-                    $duration = isset( $service->duration ) ? (int) $service->duration : 60;
+                    $duration = isset( $service['duration'] ) ? (int) $service['duration'] : 60;
 
                     $slot_start_ts = strtotime( $date . ' ' . $slot_item['start'] . ':00' );
                     $slot_end_ts   = $slot_start_ts + ( $duration * 60 );
@@ -409,11 +450,52 @@ class PBS_REST_API {
      * POST /bookings/create
      */
     public function create_booking( WP_REST_Request $request ) {
+
+        // Rate limiting: máximo 10 reservas por minuto por IP
+        $security = PBS_Security::get_instance();
+        if (!$security->check_rate_limit('bookings_create', 10, 60)) {
+            return new WP_REST_Response(
+                array('message' => __('Demasiadas solicitudes. Por favor, intenta más tarde.', 'professional-booking-system')),
+                429
+            );
+        }
+
         $params = $request->get_json_params();
         if ( empty( $params ) ) {
             $params = $request->get_params(); // por si viene como form-data
         }
 
+        // Validación de seguridad: aceptar CSRF token personalizado O nonce de WordPress
+        $csrf_token = $request->get_header( 'X-CSRF-Token' );
+        if ( empty( $csrf_token ) && ! empty( $params['csrf_token'] ) ) {
+            $csrf_token = sanitize_text_field( $params['csrf_token'] );
+        }
+
+        // Validar token CSRF propio (PBS_Security) o nonce CSRF estático
+        $csrf_valid = false;
+        if ( ! empty( $csrf_token ) ) {
+            if ( $security->verify_csrf_token( $csrf_token ) ) {
+                $csrf_valid = true;
+            } elseif ( wp_verify_nonce( $csrf_token, 'pbs_booking_csrf' ) ) {
+                $csrf_valid = true;
+            }
+        }
+
+        // Si no hay CSRF válido, intentar validar el nonce de WordPress
+        if ( ! $csrf_valid ) {
+            // Alternativa: aceptar el nonce de WordPress
+            $nonce = $request->get_header( 'X-WP-Nonce' );
+            if ( empty( $nonce ) && ! empty( $params['nonce'] ) ) {
+                $nonce = sanitize_text_field( $params['nonce'] );
+            }
+
+            if ( empty( $nonce ) || ! wp_verify_nonce( $nonce, 'wp_rest' ) ) {
+                return new WP_REST_Response(
+                    array( 'message' => __( 'Invalid CSRF token or nonce', 'professional-booking-system' ) ),
+                    403
+                );
+            }
+        }
         $service_id = isset( $params['service_id'] ) ? (int) $params['service_id'] : 0;
         $name       = isset( $params['name'] ) ? sanitize_text_field( $params['name'] ) : '';
         $email      = isset( $params['email'] ) ? sanitize_email( $params['email'] ) : '';
@@ -447,7 +529,7 @@ class PBS_REST_API {
         }
 
         // Obtener servicio
-        $service = PBS_Services::get_instance()->get_service( $service_id );
+        $service = PBS_Services::get_service( $service_id );
         if ( ! $service || $service['status'] !== 'active' ) {
             return new WP_REST_Response(
                 array( 'message' => __( 'Service not available', 'professional-booking-system' ) ),
@@ -472,35 +554,63 @@ class PBS_REST_API {
             );
         }
 
+        // Obtener el servicio para calcular payment_amount y duration
+        $service = PBS_Services::get_service( $service_id );
+        if ( ! $service ) {
+            return new WP_REST_Response(
+                array( 'message' => __( 'Service not found', 'professional-booking-system' ) ),
+                404
+            );
+        }
+
         // En PBS_REST_API::create_booking() justo antes de crear la reserva
-        if ( PBS_Google_Calendar::get_instance()->is_enabled() ) {
-            $gcal = PBS_Google_Calendar::get_instance();
+        if ( class_exists( 'PBS_Google_Calendar' ) ) {
+            try {
+                error_log( 'PBS: Checking if Google Calendar is enabled' );
+                if ( PBS_Google_Calendar::get_instance()->is_enabled() ) {
+                    error_log( 'PBS: Google Calendar is ENABLED, checking busy events' );
+                    $gcal = PBS_Google_Calendar::get_instance();
 
-            $service = PBS_Services::get_instance()->get_service( $service_id );
-            $duration = isset( $service['duration'] ) ? (int) $service['duration'] : 60;
+                    $duration = isset( $service['duration'] ) ? (int) $service['duration'] : 60;
 
-            $start_datetime = $date . 'T' . $time . ':00';
-            $start_ts = strtotime( $start_datetime );
-            $end_ts   = $start_ts + ( $duration * 60 );
-            $end_datetime = date( 'Y-m-d\TH:i:s', $end_ts );
+                    $start_datetime = $date . 'T' . $time . ':00';
+                    $start_ts = strtotime( $start_datetime );
+                    $end_ts   = $start_ts + ( $duration * 60 );
+                    $end_datetime = date( 'Y-m-d\TH:i:s', $end_ts );
 
-            $busy_events = $gcal->get_busy_events( $start_datetime, $end_datetime );
+                    error_log( 'PBS: Checking Google Calendar busy events from ' . $start_datetime . ' to ' . $end_datetime );
 
-            if ( ! is_wp_error( $busy_events ) && ! empty( $busy_events ) ) {
-                // Si hay algún evento que solape, devolvemos error
-                return new WP_REST_Response(
-                    array(
-                        'message' => 'Selected time is no longer available',
-                        'code'    => 'slot_taken_google',
-                    ),
-                    409
-                );
+                    $busy_events = $gcal->get_busy_events( $start_datetime, $end_datetime );
+
+                    error_log( 'PBS: Google Calendar busy events result: ' . wp_json_encode( $busy_events ) );
+
+                    if ( ! is_wp_error( $busy_events ) && ! empty( $busy_events ) ) {
+                        error_log( 'PBS: Found busy events on Google Calendar, blocking slot' );
+                        // Si hay algún evento que solape, devolvemos error
+                        return new WP_REST_Response(
+                            array(
+                                'message' => 'Selected time is no longer available',
+                                'code'    => 'slot_taken_google',
+                            ),
+                            409
+                        );
+                    } else {
+                        error_log( 'PBS: No busy events found on Google Calendar' );
+                    }
+                } else {
+                    error_log( 'PBS: Google Calendar is NOT enabled' );
+                }
+            } catch ( Exception $e ) {
+                // Log error but continue with booking - don't block booking if Google Calendar fails
+                error_log( 'PBS Google Calendar check failed: ' . $e->getMessage() );
             }
         }
 
         // Crear reserva (usando método ya existente)
-        $create_result = PBS_Bookings::create_booking(
-            array(
+        try {
+            error_log( 'PBS: Starting booking creation for service_id=' . $service_id );
+            
+            $booking_data = array(
                 'service_id' => $service_id,
                 'customer_name' => $name,
                 'customer_email' => $email,
@@ -508,47 +618,106 @@ class PBS_REST_API {
                 'booking_date' => $date,
                 'booking_time' => $time,
                 'customer_notes' => $notes,
-            )
-        );
+                'duration' => isset( $service['duration'] ) ? (int) $service['duration'] : 60,
+                'payment_amount' => isset( $service['price'] ) ? (float) $service['price'] : 0.00,
+            );
+            
+            error_log( 'PBS: Booking data: ' . wp_json_encode( $booking_data ) );
+            
+            $create_result = PBS_Bookings::create_booking( $booking_data );
+            
+            error_log( 'PBS: create_booking result: ' . wp_json_encode( $create_result ) );
 
-        if ( is_wp_error( $create_result ) ) {
+            if ( is_wp_error( $create_result ) ) {
+                error_log( 'PBS: WP_Error in create_booking: ' . $create_result->get_error_message() );
+                return new WP_REST_Response(
+                    array(
+                        'message' => __( 'Could not create booking', 'professional-booking-system' ),
+                        'error'   => $create_result->get_error_message(),
+                    ),
+                    500
+                );
+            }
+
+            $booking_id = isset( $create_result['id'] ) ? (int) $create_result['id'] : 0;
+            if ( ! $booking_id ) {
+                error_log( 'PBS: No booking_id in result' );
+                return new WP_REST_Response(
+                    array( 'message' => __( 'Could not create booking', 'professional-booking-system' ) ),
+                    500
+                );
+            }
+
+            error_log( 'PBS: Booking created with ID: ' . $booking_id );
+
+            $booking_obj = PBS_Bookings::get( $booking_id );
+
+            if ( ! $booking_obj ) {
+                error_log( 'PBS: Could not load booking with ID: ' . $booking_id );
+                return new WP_REST_Response(
+                    array( 'message' => __( 'Could not load booking', 'professional-booking-system' ) ),
+                    500
+                );
+            }
+            
+            error_log( 'PBS: Booking loaded successfully' );
+            
+        } catch ( Exception $e ) {
+            error_log( 'PBS: Fatal error in create_booking: ' . $e->getMessage() . ' | Trace: ' . $e->getTraceAsString() );
             return new WP_REST_Response(
                 array(
                     'message' => __( 'Could not create booking', 'professional-booking-system' ),
-                    'error'   => $create_result->get_error_message(),
+                    'error'   => $e->getMessage(),
                 ),
                 500
             );
         }
 
-        $booking_id = isset( $create_result['id'] ) ? (int) $create_result['id'] : 0;
-        if ( ! $booking_id ) {
-            return new WP_REST_Response(
-                array( 'message' => __( 'Could not create booking', 'professional-booking-system' ) ),
-                500
+        try {
+            $security->log_audit(
+                'booking_created',
+                'booking',
+                $booking_id,
+                null,
+                array(
+                    'service_id' => $service_id,
+                    'date'       => $date,
+                    'time'       => $time,
+                    'email'      => $email,
+                )
             );
+        } catch ( Exception $e ) {
+            error_log( 'PBS: Error logging audit: ' . $e->getMessage() );
         }
 
-        $booking_obj = PBS_Bookings::get( $booking_id );
+        error_log( 'PBS: Booking response data: ' . wp_json_encode( $booking_obj ) );
 
-        return new WP_REST_Response(
-            array(
-                'message' => __( 'Booking created successfully', 'professional-booking-system' ),
-                'booking' => array(
-                    'id'                => (int) $booking_obj->id,
-                    'service_id'        => (int) $booking_obj->service_id,
-                    'date'              => $booking_obj->booking_date,
-                    'time'              => $booking_obj->booking_time,
-                    'status'            => $booking_obj->status,
-                    'payment_status'    => $booking_obj->payment_status,
-                    'cancellation_token'=> $booking_obj->cancellation_token,
-                ),
+        $response_data = array(
+            'message' => __( 'Booking created successfully', 'professional-booking-system' ),
+            'booking' => array(
+                'id'                => isset( $booking_obj['id'] ) ? (int) $booking_obj['id'] : $booking_id,
+                'service_id'        => isset( $booking_obj['service_id'] ) ? (int) $booking_obj['service_id'] : $service_id,
+                'date'              => isset( $booking_obj['booking_date'] ) ? $booking_obj['booking_date'] : $date,
+                'time'              => isset( $booking_obj['booking_time'] ) ? $booking_obj['booking_time'] : $time,
+                'status'            => isset( $booking_obj['status'] ) ? $booking_obj['status'] : 'pending',
+                'payment_status'    => isset( $booking_obj['payment_status'] ) ? $booking_obj['payment_status'] : 'pending',
+                'cancellation_token'=> isset( $booking_obj['cancellation_token'] ) ? $booking_obj['cancellation_token'] : '',
             ),
-            201
         );
+
+        error_log( 'PBS: Returning response: ' . wp_json_encode( $response_data ) );
+
+        return new WP_REST_Response( $response_data, 201 );
     }
 
     public function mercadopago_create_preference( WP_REST_Request $request ) {
+        $security = PBS_Security::get_instance();
+        if ( ! $security->check_rate_limit( 'mercadopago_create_preference', 20, 60 ) ) {
+            return new WP_REST_Response(
+                array( 'message' => __( 'Demasiadas solicitudes. Por favor, intenta más tarde.', 'professional-booking-system' ) ),
+                429
+            );
+        }
         // Esperamos booking_id en el body
         $params     = $request->get_json_params();
         $booking_id = isset( $params['booking_id'] ) ? intval( $params['booking_id'] ) : 0;
@@ -560,7 +729,7 @@ class PBS_REST_API {
             );
         }
 
-        $booking = PBS_Bookings::get_instance()->get_booking( $booking_id );
+        $booking = PBS_Bookings::get_booking( $booking_id );
         if ( ! $booking ) {
             return new WP_REST_Response(
                 array( 'message' => 'Booking not found' ),
@@ -602,6 +771,13 @@ class PBS_REST_API {
     }
 
     public function stripe_create_session( WP_REST_Request $request ) {
+        $security = PBS_Security::get_instance();
+        if ( ! $security->check_rate_limit( 'stripe_create_session', 20, 60 ) ) {
+            return new WP_REST_Response(
+                array( 'message' => __( 'Demasiadas solicitudes. Por favor, intenta más tarde.', 'professional-booking-system' ) ),
+                429
+            );
+        }
         $params     = $request->get_json_params();
         $booking_id = isset( $params['booking_id'] ) ? intval( $params['booking_id'] ) : 0;
 
@@ -612,7 +788,7 @@ class PBS_REST_API {
             );
         }
 
-        $booking = PBS_Bookings::get_instance()->get_booking( $booking_id );
+        $booking = PBS_Bookings::get_booking( $booking_id );
         if ( ! $booking ) {
             return new WP_REST_Response(
                 array( 'message' => 'Booking not found' ),

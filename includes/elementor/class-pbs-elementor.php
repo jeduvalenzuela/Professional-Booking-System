@@ -36,7 +36,7 @@ class PBS_Elementor {
      * Registrar widgets
      */
     public function register_widgets( $widgets_manager ) {
-        require_once PBS_PLUGIN_DIR . 'includes/widgets/class-pbs-booking-widget.php';
+        require_once PBS_PLUGIN_DIR . 'includes/elementor/widgets/class-pbs-booking-widget.php';
         $widgets_manager->register( new \PBS_Booking_Widget() );
     }
 
@@ -71,6 +71,7 @@ class PBS_Elementor {
             array(
                 'apiUrl'    => rest_url( 'professional-booking-system/v1' ),
                 'nonce'     => wp_create_nonce( 'wp_rest' ),
+                'csrfToken' => wp_create_nonce( 'pbs_booking_csrf' ),
                 'payment'   => array(
                     'provider' => get_option( 'pbs_payment_provider', 'disabled' ),
                     'stripe'     => array(

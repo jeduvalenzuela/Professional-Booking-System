@@ -48,7 +48,7 @@ class PBS_Payment_MercadoPago extends PBS_Payment_Gateway {
         }
 
         // Obtener info del servicio para armar el item
-        $service = PBS_Services::get_instance()->get_service( $booking['service_id'] );
+        $service = PBS_Services::get_service( $booking['service_id'] );
         if ( ! $service ) {
             return array(
                 'success' => false,
@@ -193,12 +193,12 @@ class PBS_Payment_MercadoPago extends PBS_Payment_Gateway {
         $status = isset( $data['status'] ) ? $data['status'] : '';
 
         if ( $status === 'approved' ) {
-            PBS_Bookings::get_instance()->update_payment_status( $booking_id, 'paid' );
-            PBS_Bookings::get_instance()->update_booking_status( $booking_id, 'confirmed' );
-        } elseif ( $status === 'rejected' ) {
-            PBS_Bookings::get_instance()->update_payment_status( $booking_id, 'failed' );
+            PBS_Bookings::update_payment_status( $booking_id, 'paid' );
+            PBS_Bookings::update_booking_status( $booking_id, 'confirmed' );
+        } elseif ( $payment_status === 'failure' ) {
+            PBS_Bookings::update_payment_status( $booking_id, 'failed' );
         } else {
-            PBS_Bookings::get_instance()->update_payment_status( $booking_id, 'pending' );
+            PBS_Bookings::update_payment_status( $booking_id, 'pending' );
         }
 
         return new WP_REST_Response( array( 'message' => 'OK' ), 200 );

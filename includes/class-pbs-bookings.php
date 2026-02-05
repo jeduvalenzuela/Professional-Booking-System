@@ -11,12 +11,27 @@ if (!defined('ABSPATH')) {
 
 class PBS_Bookings {
 
-    public static function get_table_bookings() {
+    /**
+     * Singleton instance
+     */
+    private static $instance = null;
+
+    /**
+     * Get singleton instance
+     */
+    public static function get_instance(): self {
+        if (self::$instance === null) {
+            self::$instance = new self();
+        }
+        return self::$instance;
+    }
+
+    public static function get_table_bookings(): string {
         global $wpdb;
         return $wpdb->prefix . 'pbs_bookings';
     }
 
-    public static function get_table_locks() {
+    public static function get_table_locks(): string {
         global $wpdb;
         return $wpdb->prefix . 'pbs_booking_locks';
     }
@@ -24,7 +39,7 @@ class PBS_Bookings {
     /**
      * Crear bloqueo temporal de horario (durante pago)
      */
-    public static function create_lock($service_id, $date, $time, $duration_minutes = 5) {
+    public static function create_lock( int $service_id, string $date, string $time, int $duration_minutes = 5 ): int|WP_Error {
         global $wpdb;
 
         $service_id = (int) $service_id;
@@ -60,7 +75,7 @@ class PBS_Bookings {
     /**
      * Eliminar bloqueos de la sesión actual
      */
-    public static function clear_locks_for_current_session() {
+    public static function clear_locks_for_current_session(): int|false {
         global $wpdb;
 
         $session_id = self::get_session_id();
@@ -75,7 +90,7 @@ class PBS_Bookings {
     /**
      * Obtener un identificador de sesión (simple, basado en cookies)
      */
-    protected static function get_session_id() {
+    protected static function get_session_id(): string {
         if (!session_id()) {
             // No forzamos session_start por compatibilidad, usamos cookie propia
             if (empty($_COOKIE['pbs_session'])) {
@@ -92,10 +107,12 @@ class PBS_Bookings {
     /**
      * Comprobar si un horario está bloqueado o reservado
      */
-    public static function is_slot_taken($service_id, $date, $time) {
+    public static function is_slot_taken( int $service_id, string $date, string $time, ?string $end_time = null ): bool {
         global $wpdb;
 
         $service_id = (int) $service_id;
+
+        error_log( 'PBS_Bookings::is_slot_taken - Checking slot: service_id=' . $service_id . ', date=' . $date . ', time=' . $time );
 
         PBS_Database::clean_expired_locks();
 
@@ -112,9 +129,14 @@ class PBS_Bookings {
             $time
         );
 
+        error_log( 'PBS_Bookings::is_slot_taken - SQL: ' . $sql_booking );
+
         $booked_count = (int) $wpdb->get_var($sql_booking);
 
+        error_log( 'PBS_Bookings::is_slot_taken - Booked count: ' . $booked_count );
+
         if ($booked_count > 0) {
+            error_log( 'PBS_Bookings::is_slot_taken - SLOT TAKEN (existing bookings)' );
             return true;
         }
 
@@ -132,16 +154,28 @@ class PBS_Bookings {
             current_time('mysql')
         );
 
+        error_log( 'PBS_Bookings::is_slot_taken - Lock SQL: ' . $sql_lock );
+
         $lock_count = (int) $wpdb->get_var($sql_lock);
 
-        return $lock_count > 0;
+        error_log( 'PBS_Bookings::is_slot_taken - Lock count: ' . $lock_count );
+
+        if ( $lock_count > 0 ) {
+            error_log( 'PBS_Bookings::is_slot_taken - SLOT TAKEN (locks)' );
+            return true;
+        }
+
+        error_log( 'PBS_Bookings::is_slot_taken - SLOT AVAILABLE' );
+        return false;
     }
 
     /**
      * Crear reserva (sin procesar todavía el pago)
      */
-    public static function create_booking($data) {
+    public static function create_booking( array $data ): array|WP_Error {
         global $wpdb;
+
+        error_log( 'PBS_Bookings::create_booking - START with data: ' . wp_json_encode( $data ) );
 
         $defaults = array(
             'service_id'      => 0,
@@ -163,32 +197,41 @@ class PBS_Bookings {
 
         $data = wp_parse_args($data, $defaults);
 
+        error_log( 'PBS_Bookings::create_booking - Data after wp_parse_args: ' . wp_json_encode( $data ) );
+
         // Validaciones básicas
         if (empty($data['service_id']) || empty($data['customer_name']) || empty($data['customer_email']) || empty($data['booking_date']) || empty($data['booking_time'])) {
+            error_log( 'PBS_Bookings::create_booking - Missing required fields' );
             return new WP_Error('pbs_booking_required_fields', __('Faltan campos obligatorios para crear la reserva.', 'professional-booking-system'));
         }
 
         if (!is_email($data['customer_email'])) {
+            error_log( 'PBS_Bookings::create_booking - Invalid email: ' . $data['customer_email'] );
             return new WP_Error('pbs_invalid_email', __('El email del cliente no es válido.', 'professional-booking-system'));
         }
 
         // Comprobar que el servicio existe y está activo
         if (!PBS_Services::is_active($data['service_id'])) {
+            error_log( 'PBS_Bookings::create_booking - Service not active: ' . $data['service_id'] );
             return new WP_Error('pbs_invalid_service', __('El servicio seleccionado no está disponible.', 'professional-booking-system'));
         }
 
         // Comprobar que el día no está bloqueado
         if (PBS_Schedules::is_day_blocked($data['booking_date'])) {
+            error_log( 'PBS_Bookings::create_booking - Day blocked: ' . $data['booking_date'] );
             return new WP_Error('pbs_day_blocked', __('La fecha seleccionada no está disponible.', 'professional-booking-system'));
         }
 
         // Comprobar que el slot no está tomado
         if (self::is_slot_taken($data['service_id'], $data['booking_date'], $data['booking_time'])) {
+            error_log( 'PBS_Bookings::create_booking - Slot taken' );
             return new WP_Error('pbs_slot_taken', __('El horario seleccionado ya no está disponible.', 'professional-booking-system'));
         }
 
         // Generar token de cancelación
         $cancellation_token = wp_generate_password(32, false);
+
+        error_log( 'PBS_Bookings::create_booking - About to insert into database' );
 
         $result = $wpdb->insert(
             self::get_table_bookings(),
@@ -214,10 +257,13 @@ class PBS_Bookings {
         );
 
         if ($result === false) {
+            error_log( 'PBS_Bookings::create_booking - Database insert failed. Last error: ' . $wpdb->last_error );
             return new WP_Error('pbs_booking_create_failed', __('No se pudo crear la reserva.', 'professional-booking-system'));
         }
 
         $booking_id = $wpdb->insert_id;
+
+        error_log( 'PBS_Bookings::create_booking - SUCCESS. Booking ID: ' . $booking_id );
 
         return array(
             'id'                 => $booking_id,
@@ -228,7 +274,7 @@ class PBS_Bookings {
     /**
      * Cambiar estado de la reserva
      */
-    public static function update_status($booking_id, $status) {
+    public static function update_status( int $booking_id, string $status ): bool|WP_Error {
         global $wpdb;
 
         $booking_id = (int) $booking_id;
@@ -257,9 +303,12 @@ class PBS_Bookings {
         return true;
     }
 
-    public function update_booking_status( $booking_id, $status ) {
+    /**
+     * Actualizar estado de reserva
+     */
+    public static function update_booking_status( int $booking_id, string $status ): bool {
         global $wpdb;
-        $table = $this->table_bookings;
+        $table = self::get_table_bookings();
 
         $updated = $wpdb->update(
             $table,
@@ -276,11 +325,21 @@ class PBS_Bookings {
             return false;
         }
 
+        if ( class_exists( 'PBS_Security' ) ) {
+            PBS_Security::get_instance()->log_audit(
+                'booking_status_updated',
+                'booking',
+                $booking_id,
+                null,
+                array( 'status' => $status )
+            );
+        }
+
         // Si la reserva se confirma, intentamos crear evento en Google Calendar
         if ( $status === 'confirmed' && PBS_Google_Calendar::get_instance()->is_enabled() ) {
-            $booking = $this->get_booking( $booking_id );
+            $booking = self::get_booking( $booking_id );
             if ( $booking ) {
-                $service = PBS_Services::get_instance()->get_service( $booking['service_id'] );
+                $service = PBS_Services::get_service( $booking['service_id'] );
                 if ( $service ) {
 
                     // 1) Google Calendar / Meet
@@ -290,7 +349,7 @@ class PBS_Bookings {
                             'google_event_id' => $result['event_id'],
                         );
                         if ( ! empty( $result['meet_link'] ) ) {
-                            $update_data['video_link'] = $result['meet_link'];
+                            $update_data['videocall_link'] = $result['meet_link'];
                         }
 
                         $wpdb->update(
@@ -317,7 +376,7 @@ class PBS_Bookings {
     /**
      * Actualizar estado de pago
      */
-    public static function update_payment_status($booking_id, $payment_status, $payment_id = null) {
+    public static function update_payment_status( int $booking_id, string $payment_status, ?string $payment_id = null ): bool|WP_Error {
         global $wpdb;
 
         $allowed_statuses = array('pending', 'paid', 'refunded');
@@ -348,13 +407,23 @@ class PBS_Bookings {
             return new WP_Error('pbs_payment_status_update_failed', __('No se pudo actualizar el estado de pago.', 'professional-booking-system'));
         }
 
+        if ( class_exists( 'PBS_Security' ) ) {
+            PBS_Security::get_instance()->log_audit(
+                'payment_status_updated',
+                'booking',
+                (int) $booking_id,
+                null,
+                array( 'payment_status' => $payment_status, 'payment_id' => $payment_id )
+            );
+        }
+
         return true;
     }
 
     /**
      * Obtener reserva por ID
      */
-    public static function get($booking_id) {
+    public static function get( int $booking_id ): ?array {
         global $wpdb;
 
         $booking_id = (int) $booking_id;
@@ -367,13 +436,20 @@ class PBS_Bookings {
             $booking_id
         );
 
-        return $wpdb->get_row($sql);
+        return $wpdb->get_row($sql, ARRAY_A);
+    }
+
+    /**
+     * Obtener reserva por ID (alias para compatibilidad)
+     */
+    public static function get_booking( int $booking_id ): ?array {
+        return self::get($booking_id);
     }
 
     /**
      * Obtener reserva por token de cancelación
      */
-    public static function get_by_cancellation_token($token) {
+    public static function get_by_cancellation_token( string $token ): ?array {
         global $wpdb;
 
         $sql = $wpdb->prepare(
@@ -381,7 +457,7 @@ class PBS_Bookings {
             $token
         );
 
-        return $wpdb->get_row($sql);
+        return $wpdb->get_row($sql, ARRAY_A);
     }
 
     /**
@@ -389,10 +465,10 @@ class PBS_Bookings {
      *
      * @return array [bookings, total]
      */
-    public function get_bookings_admin_list( $args = array() ) {
+    public static function get_bookings_admin_list( array $args = array() ): array {
         global $wpdb;
-        $table_bookings = $this->table_bookings;
-        $table_services = PBS_Services::get_instance()->table_services;
+        $table_bookings = self::get_table_bookings();
+        $table_services = PBS_Services::get_table_name();
 
         $defaults = array(
             'status'         => '',
@@ -443,7 +519,7 @@ class PBS_Bookings {
                 FROM {$table_bookings} b
                 LEFT JOIN {$table_services} s ON b.service_id = s.id
                 WHERE {$where_sql}
-                ORDER BY b.date DESC, b.time DESC
+                ORDER BY b.booking_date DESC, b.booking_time DESC
                 LIMIT %d OFFSET %d";
 
         $params_list   = array_merge( $params, array( $args['per_page'], $offset ) );

@@ -142,7 +142,7 @@ class PBS_Schedules {
             ORDER BY start_time ASC
         ";
 
-        return $wpdb->get_results($sql);
+        return $wpdb->get_results($sql, ARRAY_A);
     }
 
     /**
@@ -195,7 +195,7 @@ class PBS_Schedules {
             $date
         );
 
-        return $wpdb->get_results($sql);
+        return $wpdb->get_results($sql, ARRAY_A);
     }
 
     /**

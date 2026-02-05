@@ -605,7 +605,7 @@ class PBS_Booking_Widget extends Widget_Base {
      * Get list of services for dropdown
      */
     private function get_services_list() {
-        $services_obj = PBS_Services::get_instance()->get_all_services( true );
+        $services_obj = PBS_Services::get_all( array( 'status' => 'active' ) );
         $options      = array();
 
         if ( ! empty( $services_obj ) ) {

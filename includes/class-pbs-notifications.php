@@ -116,7 +116,7 @@ class PBS_Notifications {
             '{{service_name}}' => isset( $service['name'] ) ? $service['name'] : '',
             '{{date}}'         => isset( $booking['date'] ) ? $booking['date'] : '',
             '{{time}}'         => isset( $booking['time'] ) ? $booking['time'] : '',
-            '{{video_link}}'   => ! empty( $booking['video_link'] ) ? $booking['video_link'] : '',
+            '{{video_link}}'   => ! empty( $booking['videocall_link'] ) ? $booking['videocall_link'] : '',
             '{{booking_id}}'   => isset( $booking['id'] ) ? $booking['id'] : '',
             '{{site_name}}'    => $site_name,
         );

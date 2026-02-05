@@ -40,6 +40,8 @@ class PBS_Admin {
         add_action('wp_ajax_pbs_delete_schedule', array($this, 'ajax_delete_schedule'));
         add_action('wp_ajax_pbs_save_exception', array($this, 'ajax_save_exception'));
         add_action('wp_ajax_pbs_update_booking_status', array($this, 'ajax_update_booking_status'));
+        add_action('wp_ajax_pbs_disconnect_google', array($this, 'ajax_disconnect_google'));
+        add_action('wp_ajax_pbs_generate_meet', array($this, 'ajax_generate_meet'));
     }
 
     /**
@@ -173,14 +175,33 @@ class PBS_Admin {
         register_setting( 'pbs_settings_group', 'pbs_email_send_admin' );
         register_setting( 'pbs_settings_group', 'pbs_email_send_client' );
 
-        register_setting( 'pbs_settings_group', 'pbs_gcal_enabled' );
-        register_setting( 'pbs_settings_group', 'pbs_gcal_calendar_id' );
-        register_setting( 'pbs_settings_group', 'pbs_gcal_client_id' );
-        register_setting( 'pbs_settings_group', 'pbs_gcal_client_secret' );
-        register_setting( 'pbs_settings_group', 'pbs_gcal_refresh_token' );
-        register_setting( 'pbs_settings_group', 'pbs_gcal_timezone' );
-
-        register_setting( 'pbs_settings_group', 'pbs_gcal_meet_enabled' );
+        register_setting( 'pbs_settings_group', 'pbs_gcal_enabled', array(
+            'sanitize_callback' => function($value) { return $value ? 1 : 0; }
+        ));
+        register_setting( 'pbs_settings_group', 'pbs_gcal_calendar_id', array(
+            'sanitize_callback' => 'sanitize_text_field'
+        ));
+        register_setting( 'pbs_settings_group', 'pbs_gcal_client_id', array(
+            'sanitize_callback' => 'sanitize_text_field'
+        ));
+        register_setting( 'pbs_settings_group', 'pbs_gcal_client_secret', array(
+            'sanitize_callback' => 'sanitize_text_field'
+        ));
+        register_setting( 'pbs_settings_group', 'pbs_gcal_refresh_token', array(
+            'sanitize_callback' => 'sanitize_text_field'
+        ));
+        register_setting( 'pbs_settings_group', 'pbs_gcal_timezone', array(
+            'sanitize_callback' => 'sanitize_text_field'
+        ));
+        register_setting( 'pbs_settings_group', 'pbs_gcal_create_meet', array(
+            'sanitize_callback' => function($value) { return $value ? 1 : 0; }
+        ));
+        register_setting( 'pbs_settings_group', 'pbs_gcal_authorized_email', array(
+            'sanitize_callback' => 'sanitize_email'
+        ));
+        register_setting( 'pbs_settings_group', 'pbs_gcal_meet_enabled', array(
+            'sanitize_callback' => function($value) { return $value ? 1 : 0; }
+        ));
 
 
     }
@@ -236,7 +257,7 @@ class PBS_Admin {
                  ORDER BY b.booking_date ASC, b.booking_time ASC
                  LIMIT 10",
                 current_time('Y-m-d')
-            ));
+            ), ARRAY_A);
 
             if ($upcoming) {
                 echo '<table class="wp-list-table widefat fixed striped">';
@@ -251,13 +272,13 @@ class PBS_Admin {
 
                 foreach ($upcoming as $booking) {
                     echo '<tr>';
-                    echo '<td>' . esc_html($booking->customer_name) . '</td>';
-                    echo '<td>' . esc_html($booking->service_name) . '</td>';
-                    echo '<td>' . esc_html(date_i18n(get_option('date_format'), strtotime($booking->booking_date))) . '</td>';
-                    echo '<td>' . esc_html(date_i18n(get_option('time_format'), strtotime($booking->booking_time))) . '</td>';
-                    echo '<td><span class="pbs-status pbs-status-' . esc_attr($booking->status) . '">' . esc_html(ucfirst($booking->status)) . '</span></td>';
-                    if ( ! empty( $booking['video_link'] ) ) {
-                        echo '<td><a href="' . esc_url( $booking['video_link'] ) . '" target="_blank">' . __( 'Join', 'professional-booking-system' ) . '</a></td>';
+                    echo '<td>' . esc_html($booking['customer_name']) . '</td>';
+                    echo '<td>' . esc_html($booking['service_name']) . '</td>';
+                    echo '<td>' . esc_html(date_i18n(get_option('date_format'), strtotime($booking['booking_date']))) . '</td>';
+                    echo '<td>' . esc_html(date_i18n(get_option('time_format'), strtotime($booking['booking_time']))) . '</td>';
+                    echo '<td><span class="pbs-status pbs-status-' . esc_attr($booking['status']) . '">' . esc_html(ucfirst($booking['status'])) . '</span></td>';
+                    if ( ! empty( $booking['videocall_link'] ) ) {
+                        echo '<td><a href="' . esc_url( $booking['videocall_link'] ) . '" target="_blank">' . __( 'Join', 'professional-booking-system' ) . '</a></td>';
                     }
                     echo '</tr>';
                 }
@@ -290,7 +311,7 @@ class PBS_Admin {
         $bookings_obj = PBS_Bookings::get_instance();
 
         // Obtener reservas filtradas (implementaremos el método más abajo)
-        list( $bookings, $total ) = $bookings_obj->get_bookings_admin_list(
+        list( $bookings, $total ) = PBS_Bookings::get_bookings_admin_list(
             array(
                 'status'         => $status,
                 'payment_status' => $payment,
@@ -302,7 +323,7 @@ class PBS_Admin {
         );
 
         $total_pages = ceil( $total / $per_page );
-        $services    = PBS_Services::get_instance()->get_services( array( 'status' => 'active' ) );
+        $services    = PBS_Services::get_all( array( 'status' => 'active' ) );
         ?>
         <div class="wrap pbs-admin-wrap">
             <h1><?php _e( 'Bookings', 'professional-booking-system' ); ?></h1>
@@ -375,13 +396,13 @@ class PBS_Admin {
                                 <td>#<?php echo esc_html( $booking['id'] ); ?></td>
                                 <td>
                                     <?php
-                                    echo esc_html( $booking['date'] . ' ' . substr( $booking['time'], 0, 5 ) );
+                                    echo esc_html( $booking['booking_date'] . ' ' . substr( $booking['booking_time'], 0, 5 ) );
                                     ?>
                                 </td>
                                 <td><?php echo esc_html( $booking['service_name'] ); ?></td>
                                 <td>
-                                    <?php echo esc_html( $booking['name'] ); ?><br>
-                                    <small><?php echo esc_html( $booking['email'] ); ?></small>
+                                    <?php echo esc_html( $booking['customer_name'] ); ?><br>
+                                    <small><?php echo esc_html( $booking['customer_email'] ); ?></small>
                                 </td>
                                 <td>
                                     <span class="pbs-status-badge pbs-status-<?php echo esc_attr( $booking['status'] ); ?>">
@@ -394,8 +415,8 @@ class PBS_Admin {
                                     </span>
                                 </td>
                                 <td>
-                                    <?php if ( ! empty( $booking['video_link'] ) ) : ?>
-                                        <a href="<?php echo esc_url( $booking['video_link'] ); ?>" target="_blank" class="button button-small">
+                                    <?php if ( ! empty( $booking['videocall_link'] ) ) : ?>
+                                        <a href="<?php echo esc_url( $booking['videocall_link'] ); ?>" target="_blank" class="button button-small">
                                             <?php _e( 'Join', 'professional-booking-system' ); ?>
                                         </a>
                                     <?php else : ?>
@@ -409,6 +430,11 @@ class PBS_Admin {
                                     <?php if ( $booking['status'] !== 'confirmed' ) : ?>
                                         <a href="#" class="button button-small pbs-confirm-booking" data-booking-id="<?php echo esc_attr( $booking['id'] ); ?>">
                                             <?php _e( 'Confirm', 'professional-booking-system' ); ?>
+                                        </a>
+                                    <?php endif; ?>
+                                    <?php if ( $booking['status'] === 'confirmed' ) : ?>
+                                        <a href="#" class="button button-small pbs-generate-meet" data-booking-id="<?php echo esc_attr( $booking['id'] ); ?>" title="<?php _e( 'Generate or regenerate Google Meet link', 'professional-booking-system' ); ?>">
+                                            <?php _e( 'Meet', 'professional-booking-system' ); ?>
                                         </a>
                                     <?php endif; ?>
                                     <?php if ( $booking['status'] !== 'cancelled' ) : ?>
@@ -795,6 +821,7 @@ class PBS_Admin {
                 <a href="?page=professional-booking-settings&tab=payments" class="nav-tab <?php echo $active_tab === 'payments' ? 'nav-tab-active' : ''; ?>"><?php _e('Pagos', 'professional-booking-system'); ?></a>
                 <a href="?page=professional-booking-settings&tab=videocalls" class="nav-tab <?php echo $active_tab === 'videocalls' ? 'nav-tab-active' : ''; ?>"><?php _e('Videollamadas', 'professional-booking-system'); ?></a>
                 <a href="?page=professional-booking-settings&tab=notifications" class="nav-tab <?php echo $active_tab === 'notifications' ? 'nav-tab-active' : ''; ?>"><?php _e('Notificaciones', 'professional-booking-system'); ?></a>
+                <a href="?page=professional-booking-settings&tab=google_calendar" class="nav-tab <?php echo $active_tab === 'google_calendar' ? 'nav-tab-active' : ''; ?>"><?php _e('Google Calendar', 'professional-booking-system'); ?></a>
             </h2>
 
             <form method="post" action="options.php">
@@ -815,6 +842,10 @@ class PBS_Admin {
                     case 'notifications':
                         settings_fields('pbs_notification_settings');
                         $this->render_notification_settings();
+                        break;
+                    case 'google_calendar':
+                        settings_fields('pbs_settings_group');
+                        $this->render_google_calendar_settings();
                         break;
                 }
                 submit_button();
@@ -1335,27 +1366,27 @@ class PBS_Admin {
             wp_send_json_error( array( 'message' => 'Invalid booking ID' ), 400 );
         }
 
-        $booking = PBS_Bookings::get_instance()->get_booking( $booking_id );
+        $booking = PBS_Bookings::get_booking( $booking_id );
         if ( ! $booking ) {
             wp_send_json_error( array( 'message' => 'Booking not found' ), 404 );
         }
 
-        $service = PBS_Services::get_instance()->get_service( $booking['service_id'] );
+        $service = PBS_Services::get_service( $booking['service_id'] );
 
         ob_start();
         ?>
         <div class="pbs-booking-detail">
             <p><strong><?php _e( 'Booking ID:', 'professional-booking-system' ); ?></strong> #<?php echo esc_html( $booking['id'] ); ?></p>
             <p><strong><?php _e( 'Service:', 'professional-booking-system' ); ?></strong> <?php echo esc_html( $service ? $service['name'] : '' ); ?></p>
-            <p><strong><?php _e( 'Date:', 'professional-booking-system' ); ?></strong> <?php echo esc_html( $booking['date'] ); ?></p>
-            <p><strong><?php _e( 'Time:', 'professional-booking-system' ); ?></strong> <?php echo esc_html( substr( $booking['time'], 0, 5 ) ); ?></p>
-            <p><strong><?php _e( 'Client:', 'professional-booking-system' ); ?></strong> <?php echo esc_html( $booking['name'] ); ?></p>
-            <p><strong><?php _e( 'Email:', 'professional-booking-system' ); ?></strong> <?php echo esc_html( $booking['email'] ); ?></p>
-            <?php if ( ! empty( $booking['phone'] ) ) : ?>
-                <p><strong><?php _e( 'Phone:', 'professional-booking-system' ); ?></strong> <?php echo esc_html( $booking['phone'] ); ?></p>
+            <p><strong><?php _e( 'Date:', 'professional-booking-system' ); ?></strong> <?php echo esc_html( $booking['booking_date'] ); ?></p>
+            <p><strong><?php _e( 'Time:', 'professional-booking-system' ); ?></strong> <?php echo esc_html( substr( $booking['booking_time'], 0, 5 ) ); ?></p>
+            <p><strong><?php _e( 'Client:', 'professional-booking-system' ); ?></strong> <?php echo esc_html( $booking['customer_name'] ); ?></p>
+            <p><strong><?php _e( 'Email:', 'professional-booking-system' ); ?></strong> <?php echo esc_html( $booking['customer_email'] ); ?></p>
+            <?php if ( ! empty( $booking['customer_phone'] ) ) : ?>
+                <p><strong><?php _e( 'Phone:', 'professional-booking-system' ); ?></strong> <?php echo esc_html( $booking['customer_phone'] ); ?></p>
             <?php endif; ?>
-            <?php if ( ! empty( $booking['notes'] ) ) : ?>
-                <p><strong><?php _e( 'Notes:', 'professional-booking-system' ); ?></strong><br><?php echo nl2br( esc_html( $booking['notes'] ) ); ?></p>
+            <?php if ( ! empty( $booking['customer_notes'] ) ) : ?>
+                <p><strong><?php _e( 'Notes:', 'professional-booking-system' ); ?></strong><br><?php echo nl2br( esc_html( $booking['customer_notes'] ) ); ?></p>
             <?php endif; ?>
 
             <p><strong><?php _e( 'Status:', 'professional-booking-system' ); ?></strong>
@@ -1369,9 +1400,9 @@ class PBS_Admin {
                 </span>
             </p>
 
-            <?php if ( ! empty( $booking['video_link'] ) ) : ?>
+            <?php if ( ! empty( $booking['videocall_link'] ) ) : ?>
                 <p><strong><?php _e( 'Video call:', 'professional-booking-system' ); ?></strong>
-                    <a href="<?php echo esc_url( $booking['video_link'] ); ?>" target="_blank">
+                    <a href="<?php echo esc_url( $booking['videocall_link'] ); ?>" target="_blank">
                         <?php _e( 'Join Google Meet', 'professional-booking-system' ); ?>
                     </a>
                 </p>
@@ -1385,5 +1416,265 @@ class PBS_Admin {
         $html = ob_get_clean();
 
         wp_send_json_success( array( 'html' => $html ) );
+    }
+
+    /**
+     * AJAX handler para desconectar Google Calendar
+     */
+    public function ajax_disconnect_google() {
+        check_ajax_referer('pbs_disconnect_google', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('No tienes permiso para realizar esta acción', 'professional-booking-system')), 403);
+        }
+
+        // Eliminar todas las opciones de Google Calendar
+        delete_option('pbs_gcal_enabled');
+        delete_option('pbs_gcal_client_id');
+        delete_option('pbs_gcal_client_secret');
+        delete_option('pbs_gcal_calendar_id');
+        delete_option('pbs_gcal_refresh_token');
+        delete_option('pbs_gcal_timezone');
+        delete_option('pbs_gcal_create_meet');
+        delete_option('pbs_gcal_authorized_email');
+
+        error_log('[PBS] Google Calendar desconectado');
+        wp_send_json_success(array('message' => __('Desconectado de Google Calendar', 'professional-booking-system')));
+    }
+
+    /**
+     * AJAX handler para generar/regenerar Google Meet link
+     */
+    public function ajax_generate_meet() {
+        error_log('[PBS] ajax_generate_meet called with POST data: ' . wp_json_encode($_POST));
+        
+        // Verificar nonce con mejor manejo de errores
+        if ( ! isset( $_POST['nonce'] ) || ! wp_verify_nonce( $_POST['nonce'], 'pbs_admin_nonce' ) ) {
+            error_log('[PBS] Invalid nonce for ajax_generate_meet');
+            wp_send_json_error( array( 'message' => __( 'Nonce verification failed', 'professional-booking-system' ) ) );
+            return;
+        }
+        
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('No tienes permiso para realizar esta acción', 'professional-booking-system')));
+        }
+
+        $booking_id = isset($_POST['booking_id']) ? intval($_POST['booking_id']) : 0;
+        if ($booking_id <= 0) {
+            wp_send_json_error(array('message' => __('ID de reserva inválido', 'professional-booking-system')));
+        }
+
+        // Obtener la reserva
+        $booking = PBS_Bookings::get_booking($booking_id);
+        if (!$booking) {
+            wp_send_json_error(array('message' => __('Reserva no encontrada', 'professional-booking-system')));
+        }
+
+        // Obtener el servicio
+        $service = PBS_Services::get_service($booking['service_id']);
+        if (!$service) {
+            wp_send_json_error(array('message' => __('Servicio no encontrado', 'professional-booking-system')));
+        }
+
+        // Verificar si Google Calendar está habilitado
+        if (!PBS_Google_Calendar::get_instance()->is_enabled()) {
+            wp_send_json_error(array('message' => __('Google Calendar no está habilitado. Por favor, configúralo en Reservas → Configuración → Google Calendar', 'professional-booking-system')));
+        }
+
+        try {
+            // Crear o actualizar evento en Google Calendar
+            $result = PBS_Google_Calendar::get_instance()->create_event_for_booking($booking, $service);
+            
+            if (!$result['success']) {
+                $error_msg = isset($result['error']) ? $result['error'] : 'Unknown error';
+                wp_send_json_error(array('message' => __('Error al crear evento en Google Calendar: ', 'professional-booking-system') . $error_msg));
+            }
+
+            // Actualizar la reserva con el event_id y meet_link
+            global $wpdb;
+            $update_data = array(
+                'google_event_id' => $result['event_id'],
+            );
+            if ( ! empty( $result['meet_link'] ) ) {
+                $update_data['videocall_link'] = $result['meet_link'];
+            }
+
+            $wpdb->update(
+                PBS_Bookings::get_table_bookings(),
+                $update_data,
+                array('id' => $booking_id),
+                array_fill(0, count($update_data), '%s'),
+                array('%d')
+            );
+
+            $logged_link = ! empty( $result['meet_link'] ) ? $result['meet_link'] : '';
+            error_log('[PBS] Google Meet link generado para reserva #' . $booking_id . ': ' . $logged_link);
+            
+            wp_send_json_success(array(
+                'message' => __('Google Meet link generado correctamente', 'professional-booking-system'),
+                'meet_link' => $logged_link
+            ));
+
+        } catch (Exception $e) {
+            error_log('[PBS] Error al generar Meet: ' . $e->getMessage());
+            wp_send_json_error(array('message' => __('Error al generar Google Meet link: ', 'professional-booking-system') . $e->getMessage()));
+        }
+    }
+
+    /**
+     * Renderizar configuración de Google Calendar
+     */
+    private function render_google_calendar_settings() {
+        $gcal_enabled = get_option('pbs_gcal_enabled');
+        $gcal_client_id = get_option('pbs_gcal_client_id');
+        $gcal_client_secret = get_option('pbs_gcal_client_secret');
+        $gcal_calendar_id = get_option('pbs_gcal_calendar_id', 'primary');
+        $gcal_timezone = get_option('pbs_gcal_timezone', wp_timezone_string());
+        $gcal_create_meet = get_option('pbs_gcal_create_meet');
+        $gcal_refresh_token = get_option('pbs_gcal_refresh_token');
+        $gcal_authorized_email = get_option('pbs_gcal_authorized_email');
+        ?>
+        <div class="pbs-google-calendar-settings">
+            <p><?php _e('Integra tu Google Calendar para sincronizar reservas automáticamente y evitar dobles reservas.', 'professional-booking-system'); ?></p>
+            
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><label for="pbs_gcal_enabled"><?php _e('Habilitar Google Calendar', 'professional-booking-system'); ?></label></th>
+                    <td>
+                        <label>
+                            <input type="checkbox" id="pbs_gcal_enabled" name="pbs_gcal_enabled" value="1" <?php checked($gcal_enabled, 1); ?>>
+                            <?php _e('Sincronizar reservas con Google Calendar', 'professional-booking-system'); ?>
+                        </label>
+                    </td>
+                </tr>
+
+                <tr>
+                    <th scope="row"><label for="pbs_gcal_client_id"><?php _e('Client ID de Google', 'professional-booking-system'); ?></label></th>
+                    <td>
+                        <input type="text" id="pbs_gcal_client_id" name="pbs_gcal_client_id" value="<?php echo esc_attr($gcal_client_id); ?>" class="regular-text" placeholder="xxx.apps.googleusercontent.com">
+                        <p class="description"><?php _e('Obtén este valor desde Google Cloud Console', 'professional-booking-system'); ?></p>
+                    </td>
+                </tr>
+
+                <tr>
+                    <th scope="row"><label for="pbs_gcal_client_secret"><?php _e('Client Secret de Google', 'professional-booking-system'); ?></label></th>
+                    <td>
+                        <input type="password" id="pbs_gcal_client_secret" name="pbs_gcal_client_secret" value="<?php echo esc_attr($gcal_client_secret); ?>" class="regular-text">
+                        <p class="description"><?php _e('Se guarda encriptado en la base de datos', 'professional-booking-system'); ?></p>
+                    </td>
+                </tr>
+
+                <tr>
+                    <th scope="row"><label for="pbs_gcal_refresh_token"><?php _e('Refresh Token de Google', 'professional-booking-system'); ?></label></th>
+                    <td>
+                        <textarea id="pbs_gcal_refresh_token" name="pbs_gcal_refresh_token" class="large-text" rows="3" placeholder="1//0xxxxxxxxxxxxx..."><?php echo esc_textarea($gcal_refresh_token); ?></textarea>
+                        <p class="description">
+                            <?php _e('Obtén este token desde OAuth 2.0 Playground:', 'professional-booking-system'); ?><br>
+                            <a href="https://developers.google.com/oauthplayground/" target="_blank">https://developers.google.com/oauthplayground/</a><br>
+                            <?php _e('1. Selecciona "Calendar API v3" → Authorize APIs', 'professional-booking-system'); ?><br>
+                            <?php _e('2. Haz clic en "Exchange authorization code for tokens"', 'professional-booking-system'); ?><br>
+                            <?php _e('3. Copia el "Refresh token" y pégalo aquí', 'professional-booking-system'); ?>
+                        </p>
+                    </td>
+                </tr>
+
+                <tr>
+                    <th scope="row"><label for="pbs_gcal_timezone"><?php _e('Zona horaria', 'professional-booking-system'); ?></label></th>
+                    <td>
+                        <select id="pbs_gcal_timezone" name="pbs_gcal_timezone">
+                            <?php
+                            $timezones = timezone_identifiers_list();
+                            foreach ($timezones as $tz) {
+                                echo '<option value="' . esc_attr($tz) . '" ' . selected($gcal_timezone, $tz, false) . '>' . esc_html($tz) . '</option>';
+                            }
+                            ?>
+                        </select>
+                    </td>
+                </tr>
+
+                <tr>
+                    <th scope="row"><label for="pbs_gcal_calendar_id"><?php _e('Calendar ID', 'professional-booking-system'); ?></label></th>
+                    <td>
+                        <input type="text" id="pbs_gcal_calendar_id" name="pbs_gcal_calendar_id" value="<?php echo esc_attr($gcal_calendar_id); ?>" class="regular-text" placeholder="primary">
+                        <p class="description"><?php _e('Por defecto usa tu calendario principal (primary)', 'professional-booking-system'); ?></p>
+                    </td>
+                </tr>
+
+                <tr>
+                    <th scope="row"><label for="pbs_gcal_create_meet"><?php _e('Crear Google Meet', 'professional-booking-system'); ?></label></th>
+                    <td>
+                        <label>
+                            <input type="checkbox" id="pbs_gcal_create_meet" name="pbs_gcal_create_meet" value="1" <?php checked($gcal_create_meet, 1); ?>>
+                            <?php _e('Generar automáticamente enlace de Google Meet para cada reserva', 'professional-booking-system'); ?>
+                        </label>
+                    </td>
+                </tr>
+
+                <?php if ($gcal_authorized_email) : ?>
+                    <tr>
+                        <th scope="row"><?php _e('Estado de autenticación', 'professional-booking-system'); ?></th>
+                        <td>
+                            <div style="padding: 10px; background-color: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px;">
+                                <p style="margin: 0; color: #155724;">
+                                    <strong><?php _e('✓ Conectado como:', 'professional-booking-system'); ?></strong> 
+                                    <?php echo esc_html($gcal_authorized_email); ?>
+                                </p>
+                            </div>
+                        </td>
+                    </tr>
+                <?php else : ?>
+                    <tr>
+                        <th scope="row"><?php _e('Estado', 'professional-booking-system'); ?></th>
+                        <td>
+                            <?php if (empty($gcal_refresh_token)) : ?>
+                                <div style="padding: 10px; background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 4px;">
+                                    <p style="margin: 0; color: #856404;">
+                                        <strong><?php _e('⚠️ Falta el Refresh Token', 'professional-booking-system'); ?></strong><br>
+                                        <?php _e('Necesitas obtener un Refresh Token desde OAuth 2.0 Playground para completar la configuración.', 'professional-booking-system'); ?>
+                                    </p>
+                                </div>
+                            <?php else : ?>
+                                <div style="padding: 10px; background-color: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px;">
+                                    <p style="margin: 0; color: #155724;">
+                                        <strong><?php _e('✓ Configuración completa', 'professional-booking-system'); ?></strong><br>
+                                        <?php _e('Marca "Habilitar Google Calendar" arriba y guarda cambios.', 'professional-booking-system'); ?>
+                                    </p>
+                                </div>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                <?php endif; ?>
+            </table>
+
+            <?php if ($gcal_authorized_email) : ?>
+                <p>
+                    <a href="#" class="button" id="pbs-disconnect-google" style="background-color: #f8d7da; border-color: #f5c6cb; color: #721c24;">
+                        <?php _e('Desconectar de Google', 'professional-booking-system'); ?>
+                    </a>
+                </p>
+                <script>
+                    jQuery('#pbs-disconnect-google').on('click', function(e) {
+                        e.preventDefault();
+                        if (confirm('<?php _e('¿Estás seguro? Se desconectará tu cuenta de Google.', 'professional-booking-system'); ?>')) {
+                            var formData = new FormData();
+                            formData.append('action', 'pbs_disconnect_google');
+                            formData.append('nonce', '<?php echo wp_create_nonce('pbs_disconnect_google'); ?>');
+                            
+                            fetch(ajaxurl, {
+                                method: 'POST',
+                                body: formData
+                            }).then(response => response.json()).then(data => {
+                                if (data.success) {
+                                    location.reload();
+                                } else {
+                                    alert(data.data.message || '<?php _e('Error al desconectar', 'professional-booking-system'); ?>');
+                                }
+                            });
+                        }
+                    });
+                </script>
+            <?php endif; ?>
+        </div>
+        <?php
     }
 }

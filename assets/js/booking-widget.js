@@ -8,6 +8,7 @@
             this.selectedDate = null;
             this.selectedTime = null;
             this.currentMonth = new Date();
+            this.csrfToken = null;
             
             this.init();
         }
@@ -70,7 +71,8 @@
                         <p><strong>${pbsBooking.i18n.price || 'Price'}:</strong> ${service.price} ${service.currency}</p>
                     `);
                 },
-                error: function() {
+                error: function(xhr, status, error) {
+                    console.error('Service API Error:', status, error, xhr.responseText);
                     $info.html('<p>Error loading service info</p>');
                 }
             });
@@ -155,7 +157,8 @@
                         $slotsContainer.html('<p>' + pbsBooking.i18n.noSlots + '</p>');
                     }
                 },
-                error: function() {
+                error: function(xhr, status, error) {
+                    console.error('Availability API Error:', status, error, xhr.responseText);
                     $slotsContainer.html('<p>Error loading time slots</p>');
                 }
             });
@@ -166,6 +169,12 @@
             const $form = this.$widget.find('.pbs-booking-form');
             const $message = this.$widget.find('.pbs-message');
             const $btn = this.$widget.find('.pbs-submit-btn');
+
+            // Evitar múltiples clics
+            if ($btn.prop('disabled')) {
+                console.log('Button already disabled, ignoring duplicate click');
+                return;
+            }
 
             // Validación básica
             const name = $form.find('[name="name"]').val().trim();
@@ -186,7 +195,40 @@
                 return;
             }
 
+            // Deshabilitar botón inmediatamente
             $btn.prop('disabled', true).text(pbsBooking.i18n.loading);
+
+            // Asegurar CSRF token antes de enviar
+            if (!this.csrfToken) {
+                console.log('Fetching CSRF token before booking...');
+                $.ajax({
+                    url: pbsBooking.apiUrl + '/csrf-token',
+                    method: 'GET',
+                    success: function(response) {
+                        if (response.csrf_token) {
+                            self.csrfToken = response.csrf_token;
+                            console.log('CSRF token obtained, proceeding with booking');
+                            self.sendBookingRequest($form, $btn);
+                        } else {
+                            self.showMessage('Security token error. Please try again.', 'error');
+                            $btn.prop('disabled', false).text(pbsBooking.i18n.confirmBooking || 'Confirm Booking');
+                        }
+                    },
+                    error: function() {
+                        self.showMessage('Security token error. Please try again.', 'error');
+                        $btn.prop('disabled', false).text(pbsBooking.i18n.confirmBooking || 'Confirm Booking');
+                    }
+                });
+                return;
+            }
+
+            this.sendBookingRequest($form, $btn);
+        }
+
+        sendBookingRequest($form, $btn) {
+            const self = this;
+            const name = $form.find('[name="name"]').val().trim();
+            const email = $form.find('[name="email"]').val().trim();
 
             const data = {
                 service_id: this.serviceId,
@@ -195,105 +237,109 @@
                 phone: $form.find('[name="phone"]').val(),
                 date: this.selectedDate,
                 time: this.selectedTime,
-                notes: $form.find('[name="notes"]').val()
+                notes: $form.find('[name="notes"]').val(),
+                nonce: pbsBooking.nonce,
+                csrf_token: pbsBooking.csrfToken || this.csrfToken
             };
 
             $.ajax({
                 url: pbsBooking.apiUrl + '/bookings/create',
                 method: 'POST',
+                headers: {
+                    'X-WP-Nonce': pbsBooking.nonce,
+                    'X-CSRF-Token': pbsBooking.csrfToken || this.csrfToken
+                },
                 contentType: 'application/json',
+                dataType: 'json',
                 data: JSON.stringify(data),
-                success: function(response) {
-                    const booking = response.booking;
+                statusCode: {
+                    201: function(response) {
+                        const booking = response.booking;
+                        console.log('Booking created successfully:', booking);
 
-                    // Decidir según proveedor de pago
-                    if (pbsBooking.payment && pbsBooking.payment.provider === 'mercadopago') {
-                        // MercadoPago
-                        $.ajax({
-                            url: pbsBooking.apiUrl + '/payments/mercadopago/create_preference',
-                            method: 'POST',
-                            contentType: 'application/json',
-                            data: JSON.stringify({ booking_id: booking.id }),
-                            success: function(payResponse) {
-                                if (payResponse.redirect_url) {
-                                    window.location.href = payResponse.redirect_url;
-                                } else {
+                        // Decidir según proveedor de pago
+                        if (pbsBooking.payment && pbsBooking.payment.provider === 'mercadopago') {
+                            // MercadoPago
+                            $.ajax({
+                                url: pbsBooking.apiUrl + '/payments/mercadopago/create_preference',
+                                method: 'POST',
+                                contentType: 'application/json',
+                                data: JSON.stringify({ booking_id: booking.id }),
+                                success: function(payResponse) {
+                                    if (payResponse.redirect_url) {
+                                        window.location.href = payResponse.redirect_url;
+                                    } else {
+                                        self.showMessage('Error creating MercadoPago payment', 'error');
+                                        $btn.prop('disabled', false).text('Confirm Booking');
+                                    }
+                                },
+                                error: function() {
                                     self.showMessage('Error creating MercadoPago payment', 'error');
                                     $btn.prop('disabled', false).text('Confirm Booking');
                                 }
-                            },
-                            error: function() {
-                                self.showMessage('Error creating MercadoPago payment', 'error');
-                                $btn.prop('disabled', false).text('Confirm Booking');
-                            }
-                        });
-
-                    } else if (pbsBooking.payment && pbsBooking.payment.provider === 'stripe') {
-                        // Stripe
-                        $.ajax({
-                            url: pbsBooking.apiUrl + '/payments/stripe/create_session',
-                            method: 'POST',
-                            contentType: 'application/json',
-                            data: JSON.stringify({ booking_id: booking.id }),
-                            success: function(payResponse) {
-                                if (payResponse.session_id && payResponse.public_key) {
-                                    // Cargar Stripe.js (si no está)
-                                    if (!window.Stripe) {
-                                        const script = document.createElement('script');
-                                        script.src = 'https://js.stripe.com/v3/';
-                                        script.onload = function() {
-                                            self.redirectToStripe(payResponse.public_key, payResponse.session_id);
-                                        };
-                                        document.head.appendChild(script);
+                            });
+                        } else if (pbsBooking.payment && pbsBooking.payment.provider === 'stripe') {
+                            // Stripe
+                            $.ajax({
+                                url: pbsBooking.apiUrl + '/payments/stripe/create_session',
+                                method: 'POST',
+                                contentType: 'application/json',
+                                data: JSON.stringify({ booking_id: booking.id }),
+                                success: function(payResponse) {
+                                    if (payResponse.session_id) {
+                                        self.redirectToStripe(pbsBooking.payment.public_key, payResponse.session_id);
                                     } else {
-                                        self.redirectToStripe(payResponse.public_key, payResponse.session_id);
+                                        self.showMessage('Error creating Stripe session', 'error');
+                                        $btn.prop('disabled', false).text('Confirm Booking');
                                     }
-                                } else {
+                                },
+                                error: function() {
                                     self.showMessage('Error creating Stripe session', 'error');
                                     $btn.prop('disabled', false).text('Confirm Booking');
                                 }
-                            },
-                            error: function() {
-                                self.showMessage('Error creating Stripe session', 'error');
-                                $btn.prop('disabled', false).text('Confirm Booking');
-                            }
-                        });
-
-                    }else if (pbsBooking.payment && pbsBooking.payment.provider === 'paypal') {
-                        // PayPal
-                        $.ajax({
-                            url: pbsBooking.apiUrl + '/payments/paypal/create_order',
-                            method: 'POST',
-                            contentType: 'application/json',
-                            data: JSON.stringify({ booking_id: booking.id }),
-                            success: function(payResponse) {
-                                if (payResponse.approve_url) {
-                                    window.location.href = payResponse.approve_url;
-                                } else {
+                            });
+                        } else if (pbsBooking.payment && pbsBooking.payment.provider === 'paypal') {
+                            // PayPal
+                            $.ajax({
+                                url: pbsBooking.apiUrl + '/payments/paypal/create_order',
+                                method: 'POST',
+                                contentType: 'application/json',
+                                data: JSON.stringify({ booking_id: booking.id }),
+                                success: function(payResponse) {
+                                    if (payResponse.approve_url) {
+                                        window.location.href = payResponse.approve_url;
+                                    } else {
+                                        self.showMessage('Error creating PayPal order', 'error');
+                                        $btn.prop('disabled', false).text('Confirm Booking');
+                                    }
+                                },
+                                error: function() {
                                     self.showMessage('Error creating PayPal order', 'error');
                                     $btn.prop('disabled', false).text('Confirm Booking');
                                 }
-                            },
-                            error: function() {
-                                self.showMessage('Error creating PayPal order', 'error');
-                                $btn.prop('disabled', false).text('Confirm Booking');
-                            }
-                        });
+                            });
 
-                    } else {
-                        // Sin pago online
-                        self.showMessage(pbsBooking.i18n.bookingSuccess, 'success');
-                        $form[0].reset();
-                        self.$widget.find('.pbs-time-section, .pbs-form-section').slideUp();
-                        self.renderCalendar();
-                        $btn.prop('disabled', false).text('Confirm Booking');
+                        } else {
+                            // Sin pago online
+                            self.showMessage(pbsBooking.i18n.bookingSuccess, 'success');
+                            $form[0].reset();
+                            self.$widget.find('.pbs-time-section, .pbs-form-section').slideUp();
+                            self.renderCalendar();
+                            $btn.prop('disabled', false).text('Confirm Booking');
+                        }
                     }
                 },
+                success: function(response) {
+                    // HTTP 200-299 (except 201 which is handled above)
+                    console.log('Booking response:', response);
+                },
                 error: function(xhr) {
+                    console.log('Booking error - Status:', xhr.status, 'Response:', xhr.responseJSON);
                     const message = xhr.responseJSON && xhr.responseJSON.message 
                         ? xhr.responseJSON.message 
                         : pbsBooking.i18n.bookingError;
                     self.showMessage(message, 'error');
+                    $btn.prop('disabled', false).text('Confirm Booking');
                 },
 
             });

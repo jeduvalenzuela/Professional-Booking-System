@@ -99,7 +99,7 @@ class PBS_Payment_PayPal extends PBS_Payment_Gateway {
             : 'https://api-m.sandbox.paypal.com';
 
         // Servicio
-        $service = PBS_Services::get_instance()->get_service( $booking['service_id'] );
+        $service = PBS_Services::get_service( $booking['service_id'] );
         if ( ! $service ) {
             return array(
                 'success' => false,
@@ -208,8 +208,8 @@ class PBS_Payment_PayPal extends PBS_Payment_Gateway {
             if ( ! empty( $event['resource']['purchase_units'][0]['custom_id'] ) ) {
                 $booking_id = intval( $event['resource']['purchase_units'][0]['custom_id'] );
 
-                PBS_Bookings::get_instance()->update_payment_status( $booking_id, 'paid' );
-                PBS_Bookings::get_instance()->update_booking_status( $booking_id, 'confirmed' );
+                PBS_Bookings::update_payment_status( $booking_id, 'paid' );
+                PBS_Bookings::update_booking_status( $booking_id, 'confirmed' );
             }
         }
 
